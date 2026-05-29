@@ -2,15 +2,22 @@
   <img src="./assets/logo/repo-meter-logo.svg" alt="Repo Meter logo" width="720" />
 </p>
 <p align="center">
-  <img src="./assets/logo/repo-meter-logo.png" alt="Repo Meter logo" width="720" />
+  <img src="./assets/logo/repo-meter-logo-inverse.svg" alt="Repo Meter logo" width="720" />
 </p>
 <p align="center">
   <img src="./assets/logo/repo-meter-logo-white-BG.png" alt="Repo Meter logo" width="720" />
+</p>
+<p align="center">
+  <img src="./assets/logo/repo-meter-logo-white-BG.svg" alt="Repo Meter logo" width="720" />
 </p>
 
 # Repo Meter <p align="center">
   <img src="./assets/logo/repo-meter-logo-icon.svg" alt="Repo Meter icon" width="96" />
 </p>
+ <p align="center">
+  <img src="./assets/logo/repo-meter-logo-icon-B.svg" alt="Repo Meter icon" width="96" />
+</p>
+
 
 `repo-meter` is a Git-aware CLI and live TUI for monitoring active repositories, local drift, and repo composition.
 

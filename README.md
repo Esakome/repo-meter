@@ -46,6 +46,15 @@ If you want the simpler command-line report instead:
 repo-meter scan
 ```
 
+## Docs
+
+- [Docs Index](./docs/README.md)
+- [Quickstart](./docs/quickstart.md)
+- [TUI Guide](./docs/tui.md)
+- [Configuration](./docs/configuration.md)
+- [Troubleshooting](./docs/troubleshooting.md)
+- [Release and Publish](./docs/release.md)
+
 ## What It Does
 
 - live TUI by default

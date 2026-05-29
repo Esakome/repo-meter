@@ -1,18 +1,8 @@
 <p align="center">
-  <img src="./assets/logo/repo-meter-logo-inverse.svg" alt="Repo Meter logo" width="720" />
-</p>
-<p align="center">
-  <img src="./assets/logo/repo-meter-logo-white-BG.png" alt="Repo Meter logo" width="720" />
-</p>
-<p align="center">
   <img src="./assets/logo/repo-meter-logo-white-BG.svg" alt="Repo Meter logo" width="720" />
 </p>
-
+  
 # Repo Meter 
-<p align="center">
-  <img src="./assets/logo/repo-meter-logo-icon.svg" alt="Repo Meter icon" width="96" />
-</p>
-
 
 `repo-meter` is a Git-aware CLI and live TUI for monitoring active repositories, local drift, and repo composition.
 
@@ -31,6 +21,12 @@ They tell you what is in a codebase.
 - is this growth coming from source, tests, docs, lockfiles, or generated output?
 
 The value is that `repo-meter` turns repository measurement into a live workflow.
+
+
+<p align="center">
+  <img src="./assets/logo/repo-meter-logo-icon.svg" alt="Repo Meter icon" width="96" />
+</p>
+
 
 ## Install
 

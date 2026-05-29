@@ -1,6 +1,6 @@
 {
   "name": "repo-meter",
-  "version": "1.3.1",
+  "version": "1.3.3",
   "description": "A Git-aware CLI and live TUI for monitoring active repositories, local drift, and repo composition.",
   "license": "MIT",
   "keywords": [
@@ -19,13 +19,17 @@
   "files": [
     "dist",
     "vendor/scc",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
+  "publishConfig": {
+    "access": "public"
+  },
   "engines": {
     "node": ">=20"
   },
   "bin": {
-    "repo-meter": "./dist/cli.js"
+    "repo-meter": "dist/cli.js"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",

@@ -1,17 +1,22 @@
+import { execFile } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { promisify } from "node:util";
 
 import git from "isomorphic-git";
 
 import { loadConfig } from "./config.js";
 import { countRepository } from "./count.js";
 import { scanRepository } from "./scan.js";
+import { TEXT_FILE_EXTENSIONS } from "./defaults.js";
 import type {
   RepoLiveSnapshot,
   RepoLocalGitStatus,
   RepoRemoteStatus,
   TuiRuntimeOptions
 } from "./types.js";
+
+const execFileAsync = promisify(execFile);
 
 export async function resolveTuiRuntimeOptions(input: {
   cwd: string;
@@ -106,19 +111,28 @@ export async function collectLocalGitStatus(repoPath: string, isGitRepo: boolean
     };
   }
 
+  const nativeStatus = await collectNativeGitStatus(repoPath);
+  if (nativeStatus) {
+    return nativeStatus;
+  }
+
   try {
     const branch = await git.currentBranch({ fs, dir: repoPath, fullname: false });
     const headOid = await safeResolveRef(repoPath, "HEAD");
     const lastCommitAt = headOid ? await safeCommitTimestamp(repoPath, headOid) : undefined;
+    const autocrlf = await safeGetConfig(repoPath, "core.autocrlf");
     const matrix = await git.statusMatrix({ fs, dir: repoPath });
     let modified = 0;
     let deleted = 0;
     let staged = 0;
     let untracked = 0;
 
-    for (const [, head, workdir, stage] of matrix) {
+    for (const [filepath, head, workdir, stage] of matrix) {
       if (head === 0 && workdir !== 0) {
         untracked += 1;
+      }
+      if (shouldIgnoreLikelyCrlfOnlyDelta(filepath, head, workdir, stage, autocrlf)) {
+        continue;
       }
       if (head !== 0 && workdir === 0) {
         deleted += 1;
@@ -147,6 +161,63 @@ export async function collectLocalGitStatus(repoPath: string, isGitRepo: boolean
       untracked: 0,
       clean: true
     };
+  }
+}
+
+async function collectNativeGitStatus(repoPath: string): Promise<RepoLocalGitStatus | undefined> {
+  try {
+    const [{ stdout: statusStdout }, { stdout: commitStdout }] = await Promise.all([
+      execFileAsync("git", ["status", "--porcelain=v1", "--branch"], { cwd: repoPath }),
+      execFileAsync("git", ["log", "-1", "--format=%cI"], { cwd: repoPath })
+    ]);
+
+    const lines = statusStdout.split(/\r?\n/).filter(Boolean);
+    let branch: string | undefined;
+    let modified = 0;
+    let deleted = 0;
+    let staged = 0;
+    let untracked = 0;
+
+    for (const line of lines) {
+      if (line.startsWith("## ")) {
+        const branchToken = line.slice(3).split("...")[0]?.trim();
+        if (branchToken && branchToken !== "HEAD (no branch)") {
+          branch = branchToken;
+        }
+        continue;
+      }
+
+      const x = line[0] ?? " ";
+      const y = line[1] ?? " ";
+
+      if (x === "?" && y === "?") {
+        untracked += 1;
+        continue;
+      }
+
+      if (x !== " " && x !== "?") {
+        staged += 1;
+      }
+
+      if (y === "D") {
+        deleted += 1;
+      } else if (y !== " ") {
+        modified += 1;
+      }
+    }
+
+    const lastCommitAt = commitStdout.trim() || undefined;
+    return {
+      branch,
+      modified,
+      deleted,
+      staged,
+      untracked,
+      clean: modified === 0 && deleted === 0 && staged === 0 && untracked === 0,
+      lastCommitAt
+    };
+  } catch {
+    return undefined;
   }
 }
 
@@ -296,6 +367,32 @@ async function safeCommitTimestamp(repoPath: string, oid: string): Promise<strin
   } catch {
     return undefined;
   }
+}
+
+async function safeGetConfig(repoPath: string, path: string): Promise<string | undefined> {
+  try {
+    const value = await git.getConfig({ fs, dir: repoPath, path });
+    return value ?? undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function shouldIgnoreLikelyCrlfOnlyDelta(
+  filepath: string,
+  head: number,
+  workdir: number,
+  stage: number,
+  autocrlf?: string
+): boolean {
+  if (autocrlf !== "true") {
+    return false;
+  }
+  if (!(head === 1 && workdir === 2 && stage === 1)) {
+    return false;
+  }
+  const extension = path.extname(filepath).toLowerCase();
+  return extension === "" || TEXT_FILE_EXTENSIONS.has(extension);
 }
 
 async function countAheadBehind(

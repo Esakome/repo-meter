@@ -1,120 +1,81 @@
 # Repo Meter
 
-`repo-meter` is a Git-aware repo operations dashboard for people actively working across codebases.
+`repo-meter` is a Git-aware CLI and live TUI for monitoring active repositories, local drift, and repo composition.
 
-It is trying to answer the questions:
-
-- what changed locally since I started working?
-- which repo needs attention first?
-- am I carrying a lot of untracked or dirty work?
-- is this repo mostly source, tests, docs, or dependency weight?
-- which repos in my current stack are drifting, growing, or falling behind?
+It is built for real working sessions, not just one-off code counts.
 
 ## Why Use It
 
-`scc`, `cloc`, and `tokei` are inventory tools.
-They tell you what is in a repository.
+Tools like `scc`, `cloc`, and `tokei` are great at repository inventory.
+They tell you what is in a codebase.
 
-`repo-meter` is a working tool.
-It helps while you are coding, reviewing, comparing, and juggling multiple repos.
+`repo-meter` is for the next question:
 
-The difference is practical:
+- what changed locally while I was working?
+- which repo in my stack needs attention first?
+- which repos are dirty, drifting, or falling behind?
+- is this growth coming from source, tests, docs, lockfiles, or generated output?
 
-- `scc` is excellent when you want a language table, totals, complexity, or COCOMO-style reporting
-- `repo-meter` is useful when you want to watch live repo drift, local Git state, repo composition, and day-to-day change across one or many active repos. `repo-meter` turns repository measurement into an **ongoing workflow**, not a one-time report.
+The value is that `repo-meter` turns repository measurement into a live workflow.
 
-## What Makes It Different
-
-- It treats the **working tree** as the default truth, not just the last clean commit.
-- It separates **tracked** and **untracked** work so local scratch changes are visible.
-- It groups files into **developer-facing categories** like source, tests, docs, config, generated output, migrations, and lockfiles.
-- It keeps a **live session view** so you can see counts move while you work.
-- It helps you **compare repos against each other** in one terminal session.
-- It tracks **local-vs-remote drift** in a way that is useful during active development.
-- It supports **baselines and trend checks** so you can measure growth over time, not just totals right now.
-
-## When To Use It
-
-Use `repo-meter` when you are:
-
-- working across several repos and want one live place to monitor them
-- trying to understand where today’s repo growth is coming from
-- checking whether a repo is getting heavier in source, lockfiles, docs, or generated output
-- comparing your local working tree with your tracked branch state
-- looking for the biggest files and highest-friction repos in your current session
-- saving snapshots to understand growth over days or weeks
-
-
-## What It Does
-
-- `scan` for the standard report
-- `dashboard` for a denser read-only terminal view
-- `tui` for the interactive live experience
-- `watch` for continuous refreshing without the full TUI
-- `baseline save`, `baseline compare`, and `baseline trend` for growth tracking
-- `report --json`, `--markdown`, and `--summary` for automation or sharing
-
-## Quick Start
-
-From source:
-
-```bash
-npm install
-npm run build
-node dist/cli.js scan
-node dist/cli.js tui
-```
-
-If you want `repo-meter` as a normal command on your machine:
-
-```bash
-npm link
-repo-meter scan
-repo-meter tui
-```
-
-After publishing to npm, users will be able to do:
+## Install
 
 ```bash
 npm install -g repo-meter
-repo-meter tui
 ```
 
-Or try it without installing:
+Or try it once without installing:
 
 ```bash
-npx repo-meter scan
+npx repo-meter
 ```
 
-## Best First Commands
+## Quick Start
+
+Run this:
 
 ```bash
-repo-meter scan
-repo-meter dashboard
-repo-meter tui
-repo-meter baseline save first
-repo-meter baseline compare first --summary
+repo-meter
 ```
 
-If you are running from the source repo without `npm link`, replace `repo-meter` with `node dist/cli.js`.
+That opens the TUI by default.
 
-## Commands
-
-### Scan
+If you want the simpler command-line report instead:
 
 ```bash
 repo-meter scan
 ```
 
-Shows:
+## What It Does
 
-- working tree total
-- tracked total
-- untracked total
-- category breakdown
-- top languages
-- largest files
-- health notes
+- live TUI by default
+- tracked vs untracked working-tree metrics
+- source/tests/docs/config/generated/lockfile breakdowns
+- local Git drift awareness
+- optional remote-tracking status
+- multi-repo monitoring in one terminal
+- baseline snapshots and comparisons
+- JSON, Markdown, and summary output for automation
+
+## Main Commands
+
+### Default TUI
+
+```bash
+repo-meter
+```
+
+You can also launch the TUI explicitly:
+
+```bash
+repo-meter tui
+```
+
+### Quick Report
+
+```bash
+repo-meter scan
+```
 
 ### Dashboard
 
@@ -122,32 +83,35 @@ Shows:
 repo-meter dashboard
 ```
 
-This is the fast, readable, non-interactive view.
-It is useful for quick terminal checks, scripts, screenshots, and CI-friendly output.
-
-### TUI
+### Watch Mode
 
 ```bash
-repo-meter tui
+repo-meter watch --view dashboard
 ```
 
-This is the main live experience.
-It shows:
+### Reports
 
-- the Repo Meter logo and version
-- a repo list
-- selected repo details
-- last updated timestamps
-- local Git status
-- category and language summaries
-- largest files
-- optional remote-tracking status
+```bash
+repo-meter report --json
+repo-meter report --markdown
+repo-meter report --summary
+```
 
-Useful keys:
+### Baselines
+
+```bash
+repo-meter baseline save first
+repo-meter baseline list
+repo-meter baseline compare first
+repo-meter baseline trend
+```
+
+## TUI Controls
 
 - `q` quit
 - `j` / `k` or arrow keys move
 - `a` add another repo to the current session
+- `d` remove the selected repo from the current session
 - `p` pin or unpin the selected repo
 - `s` cycle sort mode
 - `x` cycle filter mode
@@ -157,7 +121,9 @@ Useful keys:
 - `g` toggle remote details when remote mode is enabled
 - `?` or `h` open help
 
-### Multi-Repo TUI
+## Multi-Repo Use
+
+Open several repos at once:
 
 ```bash
 repo-meter tui C:\path\to\repo-a C:\path\to\repo-b
@@ -169,75 +135,68 @@ Or:
 repo-meter tui --repos C:\path\to\repo-a,C:\path\to\repo-b
 ```
 
-You can also add another repo while the TUI is already open:
+Inside the TUI:
 
-1. Press `a`
-2. Type the repo path
-3. Press `Enter`
+- press `a` to add a repo
+- press `d` to remove a repo from the current live session
+- press `p` to pin important repos
+- press `s` to sort by `activity`, `size`, or `dirty`
+- press `x` to filter to `all`, `dirty`, `active`, or `favorites`
 
-That adds the repo to the current TUI session.
+## Dirty vs Clean
 
-If you want a persistent list, save those repo paths in `repo-meter.config.json`.
+`repo-meter` marks a repo as:
 
-### Remote Status
+- `clean` when there are no modified, staged, deleted, or untracked files
+- `dirty` when local changes are present
+
+Dirty is not bad.
+It means Git still sees local changes compared with the last commit in that repo.
+
+The TUI also shows advice on how to clean a repo:
+
+- commit ready changes
+- stash work you want to pause
+- ignore or delete temporary untracked files
+
+## Remote Status
 
 ```bash
 repo-meter tui --remote
 ```
 
-This keeps local refresh as the default driver and adds optional remote-tracking awareness when local tracking refs exist.
-It does not silently fetch from the network.
+Remote mode shows local tracking-ref awareness without silently fetching from the network.
 
-The remote card now shows:
+It can show:
 
 - branch and remote name
-- ahead / behind counts when they can be derived from local refs
+- ahead / behind counts when derivable from local refs
 - last local commit time
 - last remote tracked commit time
 - sync warnings like `Push recommended` or `Branches diverged`
 
-### Watch
+## Supported Languages
+
+`repo-meter` uses `scc` as its primary counting engine when available, so language support is effectively as broad as `scc`.
+
+When `scc` is unavailable or restricted, `repo-meter` falls back to its built-in text counting path for common source and config extensions.
+
+So:
+
+- broad language coverage: yes
+- infinite custom parser support: no
+- primary ceiling: mostly the `scc` ecosystem plus the built-in fallback map
+
+To inspect what the bundled `scc` supports today, run:
 
 ```bash
-repo-meter watch --view dashboard
+vendor/scc/scc.exe --languages
 ```
 
-This is useful when you want auto-refresh but do not need the full interactive TUI.
+If we ever want to expand support in a future update, there are two paths:
 
-### Report Formats
-
-```bash
-repo-meter report --json
-repo-meter report --markdown
-repo-meter report --summary
-repo-meter report --markdown --write repo-metrics.md
-```
-
-### Baselines
-
-```bash
-repo-meter baseline save first
-repo-meter baseline list
-repo-meter baseline compare first
-repo-meter baseline compare first --summary
-repo-meter baseline trend
-```
-
-## Why TUI And Dashboard Are Separate
-
-By choice, they solve different jobs:
-
-- `dashboard` is a quick, read-only snapshot
-- `tui` is the richer live workspace
-
-Keeping both matters because not every terminal use case wants interaction.
-For example:
-
-- CI logs want `dashboard` or `report`
-- screenshots and copy-paste updates want `dashboard`
-- active coding sessions want `tui`
-
-So the TUI is the flagship experience, but the dashboard still earns its place because it is lighter and script-friendly.
+1. update the bundled `scc` version for broader native language coverage
+2. expand Repo Meter's built-in fallback extension map for environments where `scc` cannot run
 
 ## Config
 
@@ -261,18 +220,6 @@ You can customize:
 - default remote mode
 - saved repo paths for multi-repo TUI sessions
 
-## Multi-Repo Workflow
-
-The TUI is built to monitor multiple repos in one terminal session.
-
-You can:
-
-- launch with multiple repo paths
-- add repos live with `a`
-- pin important repos with `p`
-- sort by `activity`, `size`, or `dirty` with `s`
-- filter to `all`, `dirty`, `active`, or `favorites` with `x`
-
 ## Shell Completion
 
 ```bash
@@ -281,28 +228,6 @@ repo-meter completion bash
 repo-meter completion zsh
 ```
 
-Examples:
-
-```bash
-repo-meter completion powershell > repo-meter.ps1
-repo-meter completion bash > repo-meter.bash
-repo-meter completion zsh > _repo-meter
-```
-
-## Install Notes
-
-If PowerShell blocks the generated `.ps1` shim on your machine, the `.cmd` launcher still works:
-
-```bash
-repo-meter.cmd scan
-```
-
 ## License
 
-This project currently uses the `MIT` license.
-
-That is a good default for a developer tool because it is simple, permissive, and easy for individuals and teams to adopt.
-
-## Current Version
-
-`repo-meter` is currently at `v1.3.1`.
+MIT

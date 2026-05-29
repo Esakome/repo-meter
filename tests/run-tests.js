@@ -191,6 +191,7 @@ async function main() {
         {
           repos: snapshots,
           selectedRepoIndex: 0,
+          selectedRepoPath: snapshots[0].repoPath,
           focusedPanel: "repos",
           detailScroll: 0,
           intervalMs: runtime.intervalMs,
@@ -206,7 +207,7 @@ async function main() {
         40
       );
 
-      assert.match(frame, /Repo Meter v1\.3\.1/);
+      assert.match(frame, /v1\.3\.3/);
       assert.match(frame, /Realtime: local only/);
       assert.match(frame, /Sort: activity/);
       assert.match(frame, /Status Card/);
@@ -222,6 +223,7 @@ async function main() {
         {
           repos: snapshots,
           selectedRepoIndex: 0,
+          selectedRepoPath: snapshots[0].repoPath,
           focusedPanel: "repos",
           detailScroll: 0,
           intervalMs: runtime.intervalMs,
@@ -240,6 +242,7 @@ async function main() {
         {
           repos: snapshots,
           selectedRepoIndex: 0,
+          selectedRepoPath: snapshots[0].repoPath,
           focusedPanel: "detail",
           detailScroll: 0,
           intervalMs: runtime.intervalMs,
@@ -258,6 +261,7 @@ async function main() {
       assert.match(helpFrame, /Help/);
       assert.match(helpFrame, /Press \? again to return/);
       assert.match(helpFrame, /a: add another repo to this TUI session/);
+      assert.match(helpFrame, /d: remove the selected repo from this TUI session/);
       assert.match(helpFrame, /s: cycle sort mode/);
       assert.match(compactFrame, /remote not_git/);
       assert.match(compactFrame, /tracked/);

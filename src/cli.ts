@@ -101,13 +101,13 @@ async function main() {
 
   const cli = yargs(rawArgs)
     .scriptName("repo-meter")
-    .usage("$0 <command>")
-    .example("$0 tui", "Open the live interactive TUI")
+    .usage("$0 [command]")
+    .example("$0", "Open the live interactive TUI")
     .example("$0 scan", "Print the standard repo metrics report")
     .example("$0 baseline save first", "Save a baseline snapshot named 'first'")
     .help()
     .alias("h", "help")
-    .epilog("Start with `repo-meter tui` for the live experience, or `repo-meter scan` for the quick report.")
+    .epilog("By default `repo-meter` opens the live TUI. Use `repo-meter scan` for the quick report.")
     .wrap(Math.min(100, yargs().terminalWidth()))
     .option("config", {
       type: "string",
@@ -383,7 +383,10 @@ async function main() {
     .strict();
 
   if (rawArgs.length === 0) {
-    cli.showHelp();
+    const runtime = await resolveTuiRuntimeOptions({
+      cwd: process.cwd()
+    });
+    await runTui(runtime);
     return;
   }
 

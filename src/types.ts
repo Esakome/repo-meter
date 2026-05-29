@@ -171,6 +171,7 @@ export interface TuiRuntimeOptions {
 export interface TuiState {
   repos: RepoLiveSnapshot[];
   selectedRepoIndex: number;
+  selectedRepoPath?: string;
   focusedPanel: "repos" | "detail";
   detailScroll: number;
   intervalMs: number;

@@ -7,7 +7,7 @@ import { formatNumber } from "./utils.js";
 import { REPO_METER_VERSION } from "./version.js";
 
 const LOGO = [
-  "██████╗ ███████╗██████╗  ██████╗       ███╗   ███╗███████╗████████╗███████╗██████╗ ",
+  "██████╗ ███████╗██████╗  ██████╗       ███╗   ███╗███████╗████████╗███████╗██████╗",
   "██╔══██╗██╔════╝██╔══██╗██╔═══██╗      ████╗ ████║██╔════╝╚══██╔══╝██╔════╝██╔══██╗",
   "██████╔╝█████╗  ██████╔╝██║   ██║█████╗██╔████╔██║█████╗     ██║   █████╗  ██████╔╝",
   "██╔══██╗██╔══╝  ██╔═══╝ ██║   ██║╚════╝██║╚██╔╝██║██╔══╝     ██║   ██╔══╝  ██╔══██╗",
@@ -17,15 +17,19 @@ const LOGO = [
 
 const SORT_MODES: TuiState["sortMode"][] = ["activity", "size", "dirty"];
 const FILTER_MODES: TuiState["filterMode"][] = ["all", "dirty", "active", "favorites"];
+const INTERACTION_GRACE_MS = 2500;
 
 export async function runTui(runtime: TuiRuntimeOptions) {
   if (!process.stdin.isTTY || !process.stdout.isTTY) {
     throw new Error("TUI mode requires an interactive terminal (TTY).");
   }
 
+  const initialRepos = await collectManyRepoSnapshots(runtime);
+  const initialSelected = initialRepos[0]?.repoPath;
   const state: TuiState = {
-    repos: await collectManyRepoSnapshots(runtime),
+    repos: initialRepos,
     selectedRepoIndex: 0,
+    selectedRepoPath: initialSelected,
     focusedPanel: "repos",
     detailScroll: 0,
     intervalMs: runtime.intervalMs,
@@ -39,27 +43,56 @@ export async function runTui(runtime: TuiRuntimeOptions) {
   };
 
   let refreshInFlight = false;
-  const interval = setInterval(() => {
-    void refreshState("Auto refresh");
-  }, runtime.intervalMs);
+  let interactionPaused = false;
+  let lastInteractionAt = 0;
+  let interval: NodeJS.Timeout | undefined;
   let settled = false;
   let resolveDone: (() => void) | undefined;
 
+  function markInteraction() {
+    lastInteractionAt = Date.now();
+  }
+
+  function startInterval() {
+    if (!interval) {
+      interval = setInterval(() => {
+        if (!interactionPaused && Date.now() - lastInteractionAt >= INTERACTION_GRACE_MS) {
+          void refreshState("Auto refresh");
+        }
+      }, runtime.intervalMs);
+    }
+  }
+
+  function stopInterval() {
+    if (interval) {
+      clearInterval(interval);
+      interval = undefined;
+    }
+  }
+
   function render() {
+    if (interactionPaused) {
+      return;
+    }
     process.stdout.write("\u001bc");
     process.stdout.write(renderTuiFrame(state, process.stdout.columns ?? 120, process.stdout.rows ?? 40));
   }
 
   function restoreRawInput() {
+    interactionPaused = false;
     if (process.stdin.isTTY) {
       process.stdin.setRawMode(true);
     }
     process.stdin.resume();
     process.stdin.on("data", onData);
     process.stdout.write("\u001b[?25l");
+    markInteraction();
+    startInterval();
   }
 
   async function promptForRepoPath(label: string): Promise<string | undefined> {
+    interactionPaused = true;
+    stopInterval();
     process.stdin.removeListener("data", onData);
     if (process.stdin.isTTY) {
       process.stdin.setRawMode(false);
@@ -83,14 +116,13 @@ export async function runTui(runtime: TuiRuntimeOptions) {
   }
 
   async function refreshState(reason: string) {
-    if (refreshInFlight) {
+    if (refreshInFlight || interactionPaused) {
       return;
     }
     refreshInFlight = true;
-    const selectedPath = selectedRepo(state)?.repoPath;
     try {
       state.repos = await collectManyRepoSnapshots(runtime, state.repos);
-      preserveSelection(state, selectedPath);
+      preserveSelection(state, state.selectedRepoPath);
       state.statusMessage = `${reason}: ${selectedRepo(state)?.lastUpdatedAt ?? "No repo selected"}`;
     } catch (error) {
       state.statusMessage = error instanceof Error ? error.message : "Refresh failed";
@@ -117,18 +149,16 @@ export async function runTui(runtime: TuiRuntimeOptions) {
       }
 
       const previousPaths = [...runtime.repoPaths];
-      const previousSelection = selectedRepo(state)?.repoPath;
       runtime.repoPaths = [...runtime.repoPaths, repoPath];
       state.statusMessage = `Adding ${repoPath}`;
       try {
         state.repos = await collectManyRepoSnapshots(runtime, state.repos);
       } catch (error) {
         runtime.repoPaths = previousPaths;
-        preserveSelection(state, previousSelection);
+        preserveSelection(state, state.selectedRepoPath);
         throw error;
       }
-      const nextSelection = state.repos.some((repo) => repo.repoPath === repoPath) ? repoPath : previousSelection;
-      preserveSelection(state, nextSelection);
+      preserveSelection(state, repoPath);
       state.statusMessage = `Added ${selectedRepo(state)?.repoName ?? repoPath}`;
     } catch (error) {
       state.statusMessage = error instanceof Error ? error.message : "Unable to add repo";
@@ -137,7 +167,26 @@ export async function runTui(runtime: TuiRuntimeOptions) {
     }
   }
 
+  function removeSelectedRepo() {
+    const repo = selectedRepo(state);
+    if (!repo) {
+      state.statusMessage = "No repo selected";
+      render();
+      return;
+    }
+
+    markInteraction();
+    runtime.repoPaths = runtime.repoPaths.filter((entry) => entry !== repo.repoPath);
+    state.repos = state.repos.filter((entry) => entry.repoPath !== repo.repoPath);
+    state.favoriteRepoPaths = state.favoriteRepoPaths.filter((entry) => entry !== repo.repoPath);
+    state.selectedRepoPath = visibleRepos(state)[0]?.repoPath;
+    preserveSelection(state, state.selectedRepoPath);
+    state.statusMessage = `Removed ${repo.repoName}`;
+    render();
+  }
+
   function moveSelection(delta: number) {
+    markInteraction();
     if (state.focusedPanel === "repos") {
       const repos = visibleRepos(state);
       if (repos.length === 0) {
@@ -145,8 +194,10 @@ export async function runTui(runtime: TuiRuntimeOptions) {
         render();
         return;
       }
-      state.selectedRepoIndex = Math.max(0, Math.min(repos.length - 1, state.selectedRepoIndex + delta));
-      state.statusMessage = `Selected ${repos[state.selectedRepoIndex]!.repoName}`;
+      const nextIndex = Math.max(0, Math.min(repos.length - 1, state.selectedRepoIndex + delta));
+      state.selectedRepoIndex = nextIndex;
+      state.selectedRepoPath = repos[nextIndex]!.repoPath;
+      state.statusMessage = `Selected ${repos[nextIndex]!.repoName}`;
     } else {
       state.detailScroll = Math.max(0, state.detailScroll + delta);
       state.statusMessage = `Scrolled detail to ${state.detailScroll}`;
@@ -155,19 +206,19 @@ export async function runTui(runtime: TuiRuntimeOptions) {
   }
 
   function cycleSortMode() {
+    markInteraction();
     const currentIndex = SORT_MODES.indexOf(state.sortMode);
-    const selectedPath = selectedRepo(state)?.repoPath;
     state.sortMode = SORT_MODES[(currentIndex + 1) % SORT_MODES.length]!;
-    preserveSelection(state, selectedPath);
+    preserveSelection(state, state.selectedRepoPath);
     state.statusMessage = `Sort: ${state.sortMode}`;
     render();
   }
 
   function cycleFilterMode() {
+    markInteraction();
     const currentIndex = FILTER_MODES.indexOf(state.filterMode);
-    const selectedPath = selectedRepo(state)?.repoPath;
     state.filterMode = FILTER_MODES[(currentIndex + 1) % FILTER_MODES.length]!;
-    preserveSelection(state, selectedPath);
+    preserveSelection(state, state.selectedRepoPath);
     state.statusMessage = `Filter: ${state.filterMode}`;
     render();
   }
@@ -177,6 +228,7 @@ export async function runTui(runtime: TuiRuntimeOptions) {
     if (!repo) {
       return;
     }
+    markInteraction();
     if (state.favoriteRepoPaths.includes(repo.repoPath)) {
       state.favoriteRepoPaths = state.favoriteRepoPaths.filter((entry) => entry !== repo.repoPath);
       state.statusMessage = `Unpinned ${repo.repoName}`;
@@ -193,7 +245,7 @@ export async function runTui(runtime: TuiRuntimeOptions) {
       return;
     }
     settled = true;
-    clearInterval(interval);
+    stopInterval();
     process.stdin.removeListener("data", onData);
     process.off("SIGINT", cleanup);
     if (process.stdin.isTTY) {
@@ -212,27 +264,35 @@ export async function runTui(runtime: TuiRuntimeOptions) {
       return;
     }
     if (key === "\t") {
+      markInteraction();
       state.focusedPanel = state.focusedPanel === "repos" ? "detail" : "repos";
       state.statusMessage = `Focus: ${state.focusedPanel}`;
       render();
       return;
     }
     if (key === "?" || key === "h") {
+      markInteraction();
       state.showHelp = !state.showHelp;
       state.statusMessage = state.showHelp ? "Help opened" : "Help closed";
       render();
       return;
     }
     if (key === "r") {
+      markInteraction();
       void refreshState("Manual refresh");
       return;
     }
     if (key === "u") {
+      markInteraction();
       void refreshState("Upstream check");
       return;
     }
     if (key === "a") {
       void addRepoPrompt();
+      return;
+    }
+    if (key === "d") {
+      removeSelectedRepo();
       return;
     }
     if (key === "s") {
@@ -248,6 +308,7 @@ export async function runTui(runtime: TuiRuntimeOptions) {
       return;
     }
     if (key === "g" && state.remoteEnabled) {
+      markInteraction();
       state.showRemoteDetails = !state.showRemoteDetails;
       state.statusMessage = state.showRemoteDetails ? "Remote details shown" : "Remote details hidden";
       render();
@@ -266,7 +327,7 @@ export async function runTui(runtime: TuiRuntimeOptions) {
   process.stdin.setRawMode(true);
   process.stdin.resume();
   process.stdin.on("data", onData);
-
+  startInterval();
   render();
   process.on("SIGINT", cleanup);
 
@@ -285,16 +346,19 @@ export function renderTuiFrame(state: TuiState, width: number, height: number): 
   const rightWidth = compact ? width : Math.max(42, width - leftWidth - 3);
   const lines: string[] = [];
   const repos = visibleRepos(state);
+  const repo = selectedRepo(state);
 
-  lines.push(...LOGO);
-  lines.push(`Repo Meter v${REPO_METER_VERSION}`);
+  lines.push(...renderLogoWithVersion());
   lines.push(
     `Realtime: ${state.remoteEnabled ? "local + remote status" : "local only"}  Interval: ${state.intervalMs}ms  Visible: ${repos.length}/${state.repos.length}  Sort: ${state.sortMode}  Filter: ${state.filterMode}`
   );
+  if (repo) {
+    lines.push("Repo state hint: clean means no local Git changes, dirty means local changes are present.");
+  }
   lines.push("=".repeat(width));
 
   const repoLines = renderRepoList(state, leftWidth);
-  const detailLines = renderDetailPane(state, rightWidth, height - lines.length - 2);
+  const detailLines = renderDetailPane(state, rightWidth, Math.max(height - lines.length - 2, repoLines.length));
   if (compact) {
     lines.push(...repoLines);
     lines.push("-".repeat(width));
@@ -328,11 +392,11 @@ function renderRepoList(state: TuiState, width: number): string[] {
 
   for (let index = 0; index < repos.length; index += 1) {
     const repo = repos[index]!;
-    const prefix = index === state.selectedRepoIndex ? ">" : " ";
-    const pin = state.favoriteRepoPaths.includes(repo.repoPath) ? "★" : " ";
-    const dirtyBadge = repo.localGit.clean ? "clean" : "dirty";
-    const delta = repo.deltaLines === 0 ? "±0" : repo.deltaLines > 0 ? `+${repo.deltaLines}` : `${repo.deltaLines}`;
-    lines.push(`${prefix}${pin} ${truncate(`${repo.repoName} ${formatNumber(repo.summary.totals.lines)}l ${dirtyBadge}`, width - 3)}`);
+    const prefix = repo.repoPath === state.selectedRepoPath ? ">" : " ";
+    const pin = state.favoriteRepoPaths.includes(repo.repoPath) ? "*" : " ";
+    const cleanliness = repo.localGit.clean ? "clean" : "dirty";
+    const delta = repo.deltaLines === 0 ? "0" : repo.deltaLines > 0 ? `+${repo.deltaLines}` : `${repo.deltaLines}`;
+    lines.push(`${prefix}${pin} ${truncate(`${repo.repoName} ${formatNumber(repo.summary.totals.lines)}l ${cleanliness}`, width - 3)}`);
     lines.push(`   delta ${delta}  updated ${relativeTime(repo.lastUpdatedAt)}`.slice(0, width));
     lines.push(`   ${remoteBadge(repo)}  branch ${repo.localGit.branch ?? "n/a"}`.slice(0, width));
     lines.push("");
@@ -362,6 +426,7 @@ function renderDetailPane(state: TuiState, width: number, maxHeight: number): st
   lines.push(`- Last file change: ${repo.lastFileChangeAt ?? "Unknown"}`);
   lines.push(`- Last local commit: ${repo.localGit.lastCommitAt ?? "Unknown"}`);
   lines.push(`- Local git: ${formatLocalGit(repo)}`);
+  lines.push(`- Repo state: ${repo.localGit.clean ? "Clean" : "Dirty"} (${dirtyExplanation(repo)})`);
 
   if (state.showRemoteDetails || !state.remoteEnabled) {
     lines.push("Remote Card");
@@ -375,6 +440,11 @@ function renderDetailPane(state: TuiState, width: number, maxHeight: number): st
     if (repo.remote.warning) {
       lines.push(`- Warning: ${repo.remote.warning}`);
     }
+  }
+
+  lines.push("", "Advice");
+  for (const note of repoAdvice(repo)) {
+    lines.push(`- ${note}`);
   }
 
   lines.push("", "Categories");
@@ -408,20 +478,20 @@ function renderDetailPane(state: TuiState, width: number, maxHeight: number): st
 function renderFooter(state: TuiState, width: number): string {
   const repos = visibleRepos(state);
   const selected = selectedRepo(state);
-  const text = `q quit  j/k move  a add  p pin  s sort  x filter  r refresh  u upstream  g remote  ? help  ${selected ? `repo ${state.selectedRepoIndex + 1}/${Math.max(repos.length, 1)}: ${selected.repoName}` : "no selection"}  status: ${state.statusMessage}`;
+  const text = `q quit  j/k move  a add  d remove  p pin  s sort  x filter  r refresh  u upstream  g remote  ? help  ${selected ? `repo ${state.selectedRepoIndex + 1}/${Math.max(repos.length, 1)}: ${selected.repoName}` : "no selection"}  status: ${state.statusMessage}`;
   return truncate(text, width);
 }
 
 function renderHelpFrame(state: TuiState, width: number): string {
   const lines = [
-    ...LOGO,
-    `Repo Meter v${REPO_METER_VERSION}`,
+    ...renderLogoWithVersion(),
     "Help",
     "=".repeat(width),
     "Navigation",
     "- q: quit",
     "- j / k or arrow keys: move",
     "- a: add another repo to this TUI session",
+    "- d: remove the selected repo from this TUI session",
     "- p: pin or unpin the selected repo",
     "- s: cycle sort mode (activity, size, dirty)",
     "- x: cycle filter mode (all, dirty, active, favorites)",
@@ -433,7 +503,8 @@ function renderHelpFrame(state: TuiState, width: number): string {
     "",
     "Realtime behavior",
     "- local changes update automatically based on polling",
-    "- last updated changes when file content or git state changes",
+    "- auto refresh waits briefly after keyboard interaction",
+    "- input prompts pause auto-refresh until you finish typing",
     "- remote mode is optional and never replaces local refresh",
     "",
     "Current session",
@@ -453,15 +524,9 @@ function visibleRepos(state: TuiState): RepoLiveSnapshot[] {
 }
 
 function matchesFilter(repo: RepoLiveSnapshot, state: TuiState): boolean {
-  if (state.filterMode === "all") {
-    return true;
-  }
-  if (state.filterMode === "dirty") {
-    return !repo.localGit.clean;
-  }
-  if (state.filterMode === "favorites") {
-    return state.favoriteRepoPaths.includes(repo.repoPath);
-  }
+  if (state.filterMode === "all") return true;
+  if (state.filterMode === "dirty") return !repo.localGit.clean;
+  if (state.filterMode === "favorites") return state.favoriteRepoPaths.includes(repo.repoPath);
   return isActiveRepo(repo);
 }
 
@@ -471,17 +536,14 @@ function compareRepos(left: RepoLiveSnapshot, right: RepoLiveSnapshot, state: Tu
   if (leftPinned !== rightPinned) {
     return rightPinned - leftPinned;
   }
-
   if (state.sortMode === "size") {
     return right.summary.totals.lines - left.summary.totals.lines || left.repoName.localeCompare(right.repoName);
   }
-
   if (state.sortMode === "dirty") {
     const dirtyDelta =
       dirtyScore(right) - dirtyScore(left) || Math.abs(right.deltaLines) - Math.abs(left.deltaLines);
     return dirtyDelta || left.repoName.localeCompare(right.repoName);
   }
-
   const activityDelta =
     activityScore(right) - activityScore(left) ||
     new Date(right.lastUpdatedAt).getTime() - new Date(left.lastUpdatedAt).getTime();
@@ -503,32 +565,34 @@ function activityScore(repo: RepoLiveSnapshot): number {
 }
 
 function isActiveRepo(repo: RepoLiveSnapshot): boolean {
-  if (!repo.localGit.clean || repo.deltaLines !== 0) {
-    return true;
-  }
-  if (!repo.lastFileChangeAt) {
-    return false;
-  }
-  const oneDayMs = 24 * 60 * 60 * 1000;
-  return Date.now() - new Date(repo.lastFileChangeAt).getTime() <= oneDayMs;
+  if (!repo.localGit.clean || repo.deltaLines !== 0) return true;
+  if (!repo.lastFileChangeAt) return false;
+  return Date.now() - new Date(repo.lastFileChangeAt).getTime() <= 24 * 60 * 60 * 1000;
 }
 
 function preserveSelection(state: TuiState, repoPath?: string) {
   const repos = visibleRepos(state);
   if (repos.length === 0) {
     state.selectedRepoIndex = 0;
+    state.selectedRepoPath = undefined;
     return;
   }
   if (!repoPath) {
     state.selectedRepoIndex = Math.min(state.selectedRepoIndex, repos.length - 1);
+    state.selectedRepoPath = repos[state.selectedRepoIndex]?.repoPath;
     return;
   }
   const nextIndex = repos.findIndex((repo) => repo.repoPath === repoPath);
   state.selectedRepoIndex = nextIndex >= 0 ? nextIndex : Math.min(state.selectedRepoIndex, repos.length - 1);
+  state.selectedRepoPath = repos[state.selectedRepoIndex]?.repoPath;
 }
 
 function selectedRepo(state: TuiState): RepoLiveSnapshot | undefined {
   const repos = visibleRepos(state);
+  if (repos.length === 0) return undefined;
+  if (state.selectedRepoPath) {
+    return repos.find((repo) => repo.repoPath === state.selectedRepoPath) ?? repos[0];
+  }
   return repos[state.selectedRepoIndex] ?? repos[0];
 }
 
@@ -541,32 +605,46 @@ function remoteBadge(repo: RepoLiveSnapshot): string {
   return `remote ${repo.remote.mode}`;
 }
 
-function truncate(value: string, width: number): string {
-  if (value.length <= width) {
-    return value;
-  }
-  return `${value.slice(0, Math.max(0, width - 1))}…`;
+function renderLogoWithVersion(): string[] {
+  return LOGO.map((line, index) => (index === 0 ? `${line}  v${REPO_METER_VERSION}` : line));
 }
 
-function shortTime(iso: string): string {
-  const date = new Date(iso);
-  return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}:${String(
-    date.getSeconds()
-  ).padStart(2, "0")}`;
+function dirtyExplanation(repo: RepoLiveSnapshot): string {
+  if (repo.localGit.clean) {
+    return "no modified, staged, deleted, or untracked files";
+  }
+  return `${repo.localGit.modified} modified, ${repo.localGit.staged} staged, ${repo.localGit.deleted} deleted, ${repo.localGit.untracked} untracked`;
+}
+
+function repoAdvice(repo: RepoLiveSnapshot): string[] {
+  if (repo.localGit.clean) {
+    return ["Repo is clean. No local cleanup needed right now."];
+  }
+  const advice = ["Dirty means the repo has local changes that are not fully settled yet."];
+  if (repo.localGit.staged > 0) {
+    advice.push("Review staged changes and commit them if they are ready.");
+  }
+  if (repo.localGit.modified > 0 || repo.localGit.deleted > 0) {
+    advice.push("Either commit, stash, or discard working tree changes you no longer need.");
+  }
+  if (repo.localGit.untracked > 0) {
+    advice.push("Review untracked files. Commit them, ignore them, or delete them if they are temporary.");
+  }
+  return advice;
+}
+
+function truncate(value: string, width: number): string {
+  if (value.length <= width) return value;
+  return `${value.slice(0, Math.max(0, width - 1))}…`;
 }
 
 function relativeTime(iso: string): string {
   const deltaMs = Math.max(0, Date.now() - new Date(iso).getTime());
   const seconds = Math.floor(deltaMs / 1000);
-  if (seconds < 60) {
-    return `${seconds}s ago`;
-  }
+  if (seconds < 60) return `${seconds}s ago`;
   const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) {
-    return `${minutes}m ago`;
-  }
-  const hours = Math.floor(minutes / 60);
-  return `${hours}h ago`;
+  if (minutes < 60) return `${minutes}m ago`;
+  return `${Math.floor(minutes / 60)}h ago`;
 }
 
 function formatLocalGit(snapshot: RepoLiveSnapshot): string {
@@ -576,8 +654,6 @@ function formatLocalGit(snapshot: RepoLiveSnapshot): string {
 }
 
 function signed(value: number): string {
-  if (value > 0) {
-    return `+${formatNumber(value)}`;
-  }
+  if (value > 0) return `+${formatNumber(value)}`;
   return formatNumber(value);
 }

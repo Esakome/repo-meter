@@ -13,6 +13,8 @@ import { countRepository } from "../dist/count.js";
 import {
   collectManyRepoSnapshots,
   collectRemoteStatus,
+  parseRepoInputText,
+  parseNativeGitStatusOutput,
   resolveTuiRuntimeOptions
 } from "../dist/live.js";
 import { renderReport } from "../dist/report.js";
@@ -141,6 +143,33 @@ async function main() {
       assert.ok(summary.files.some((file) => file.relativePath === "src/index.ts"));
     });
 
+    await run("scans only the requested subdirectory inside a git repo", async () => {
+      const cwd = await createTempDir();
+      await mkdir(path.join(cwd, "apps", "brand"), { recursive: true });
+      await mkdir(path.join(cwd, "apps", "admin"), { recursive: true });
+      await writeFile(path.join(cwd, "apps", "brand", "page.ts"), "export const brand = true;\n", "utf8");
+      await writeFile(path.join(cwd, "apps", "admin", "page.ts"), "export const admin = true;\n", "utf8");
+      await git.init({ fs, dir: cwd, defaultBranch: "main" });
+      await git.add({ fs, dir: cwd, filepath: "apps/brand/page.ts" });
+      await git.add({ fs, dir: cwd, filepath: "apps/admin/page.ts" });
+      await git.commit({
+        fs,
+        dir: cwd,
+        author: { name: "Repo Meter", email: "repo-meter@example.com" },
+        message: "monolith apps"
+      });
+
+      const scope = path.join(cwd, "apps", "brand");
+      const scan = await scanRepository({ cwd: scope });
+      const summary = await countRepository(scan, 10);
+
+      assert.equal(summary.root, scope);
+      assert.equal(summary.git?.root, cwd);
+      assert.ok(summary.files.every((file) => !file.relativePath.includes("admin")));
+      assert.ok(summary.files.some((file) => file.relativePath === "page.ts"));
+      assert.equal(summary.tracked.lines, summary.totals.lines);
+    });
+
     await run("resolves tui repo targets from args and config", async () => {
       const cwd = await createFixtureRepo({ git: false });
       await writeFile(
@@ -166,6 +195,35 @@ async function main() {
       assert.equal(fromArgs.remote, false);
     });
 
+    await run("recovers quoted multi-repo inputs for tui launch", async () => {
+      const cwd = await createTempDir();
+      const pathA = path.join(cwd, "repo a");
+      const pathB = path.join(cwd, "repo b");
+
+      const fromPositionalBlob = await resolveTuiRuntimeOptions({
+        cwd,
+        pathArgs: [`"${pathA}" "${pathB}"`]
+      });
+      assert.deepEqual(fromPositionalBlob.repoPaths, [path.normalize(pathA), path.normalize(pathB)]);
+
+      const fromReposFlag = await resolveTuiRuntimeOptions({
+        cwd,
+        reposFlag: `"${pathA}","${pathB}"`
+      });
+      assert.deepEqual(fromReposFlag.repoPaths, [path.normalize(pathA), path.normalize(pathB)]);
+    });
+
+    await run("parses multi-repo text pasted into the tui add prompt", async () => {
+      const cwd = await createTempDir();
+      const pathA = path.join(cwd, "repo a");
+      const pathB = path.join(cwd, "repo b");
+      const pathC = path.join(cwd, "repo c");
+
+      assert.deepEqual(parseRepoInputText(`"${pathA}" "${pathB}" "${pathC}"`), [pathA, pathB, pathC]);
+      assert.deepEqual(parseRepoInputText(`repo-meter tui "${pathA}" "${pathB}"`), [pathA, pathB]);
+      assert.deepEqual(parseRepoInputText(`--repos "${pathA},${pathB}"`), [pathA, pathB]);
+    });
+
     await run("updates lastUpdated timestamps when repo data changes", async () => {
       const cwd = await createFixtureRepo({ git: false });
       const runtime = await resolveTuiRuntimeOptions({ cwd, pathArgs: [cwd] });
@@ -180,6 +238,22 @@ async function main() {
       const cwd = await createFixtureRepo({ git: true });
       const status = await collectRemoteStatus(cwd, true, true);
       assert.equal(status.mode, "no_remote");
+    });
+
+    await run("ignores non-porcelain git warning lines in native status parsing", async () => {
+      const parsed = parseNativeGitStatusOutput(
+        [
+          "## main...origin/main",
+          "warning: in the working copy of 'README.md', LF will be replaced by CRLF the next time Git touches it",
+          "warning: in the working copy of 'docs/guide.md', LF will be replaced by CRLF the next time Git touches it"
+        ].join("\n")
+      );
+
+      assert.equal(parsed.branch, "main");
+      assert.equal(parsed.modified, 0);
+      assert.equal(parsed.deleted, 0);
+      assert.equal(parsed.staged, 0);
+      assert.equal(parsed.untracked, 0);
     });
 
     await run("renders a tui frame with logo and repo details", async () => {
@@ -207,7 +281,7 @@ async function main() {
         40
       );
 
-      assert.match(frame, /v1\.3\.3/);
+      assert.match(frame, /v\d+\.\d+\.\d+/);
       assert.match(frame, /Realtime: local only/);
       assert.match(frame, /Sort: activity/);
       assert.match(frame, /Status Card/);

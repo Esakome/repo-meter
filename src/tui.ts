@@ -1,7 +1,8 @@
+import { access } from "node:fs/promises";
 import path from "node:path";
 import readline from "node:readline";
 
-import { collectManyRepoSnapshots } from "./live.js";
+import { collectManyRepoSnapshots, parseRepoInputText } from "./live.js";
 import type { RepoLiveSnapshot, TuiRuntimeOptions, TuiState } from "./types.js";
 import { formatNumber } from "./utils.js";
 import { REPO_METER_VERSION } from "./version.js";
@@ -141,16 +142,31 @@ export async function runTui(runtime: TuiRuntimeOptions) {
         return;
       }
 
-      const repoPath = path.resolve(process.cwd(), input);
-      if (runtime.repoPaths.includes(repoPath)) {
-        state.statusMessage = `Already watching ${repoPath}`;
+      const candidates = uniqueResolvedRepoPaths(process.cwd(), parseRepoInputText(input));
+      if (candidates.length === 0) {
+        state.statusMessage = "No repo paths found. Paste one or more repo paths.";
+        render();
+        return;
+      }
+
+      const missing = await findMissingRepoPaths(candidates);
+      if (missing.length > 0) {
+        state.statusMessage = `Path not found: ${missing[0]}`;
+        render();
+        return;
+      }
+
+      const existing = candidates.filter((repoPath) => runtime.repoPaths.includes(repoPath));
+      const additions = candidates.filter((repoPath) => !runtime.repoPaths.includes(repoPath));
+      if (additions.length === 0) {
+        state.statusMessage = existing.length > 0 ? `Already watching ${existing[0]}` : "No new repos to add";
         render();
         return;
       }
 
       const previousPaths = [...runtime.repoPaths];
-      runtime.repoPaths = [...runtime.repoPaths, repoPath];
-      state.statusMessage = `Adding ${repoPath}`;
+      runtime.repoPaths = [...runtime.repoPaths, ...additions];
+      state.statusMessage = `Adding ${additions.length} repo${additions.length === 1 ? "" : "s"}`;
       try {
         state.repos = await collectManyRepoSnapshots(runtime, state.repos);
       } catch (error) {
@@ -158,8 +174,11 @@ export async function runTui(runtime: TuiRuntimeOptions) {
         preserveSelection(state, state.selectedRepoPath);
         throw error;
       }
-      preserveSelection(state, repoPath);
-      state.statusMessage = `Added ${selectedRepo(state)?.repoName ?? repoPath}`;
+      preserveSelection(state, additions[0]);
+      state.statusMessage =
+        additions.length === 1
+          ? `Added ${selectedRepo(state)?.repoName ?? additions[0]}`
+          : `Added ${additions.length} repos`;
     } catch (error) {
       state.statusMessage = error instanceof Error ? error.message : "Unable to add repo";
     } finally {
@@ -656,4 +675,20 @@ function formatLocalGit(snapshot: RepoLiveSnapshot): string {
 function signed(value: number): string {
   if (value > 0) return `+${formatNumber(value)}`;
   return formatNumber(value);
+}
+
+async function findMissingRepoPaths(repoPaths: string[]): Promise<string[]> {
+  const missing: string[] = [];
+  for (const repoPath of repoPaths) {
+    try {
+      await access(repoPath);
+    } catch {
+      missing.push(repoPath);
+    }
+  }
+  return missing;
+}
+
+function uniqueResolvedRepoPaths(cwd: string, repoPaths: string[]): string[] {
+  return [...new Set(repoPaths.map((repoPath) => path.normalize(path.resolve(cwd, repoPath.trim()))))];
 }

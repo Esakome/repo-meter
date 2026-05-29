@@ -19,17 +19,19 @@ export interface ScanResult {
   trackedFiles: number;
   untrackedFiles: number;
   since?: string;
+  gitRoot?: string;
 }
 
 export async function scanRepository(options: ScanOptions): Promise<ScanResult> {
-  const config = await loadConfig(options.cwd, options.configPath);
-  const gitRoot = await detectGitRoot(options.cwd);
+  const scopeRoot = path.resolve(options.cwd);
+  const config = await loadConfig(scopeRoot, options.configPath);
+  const gitRoot = await detectGitRoot(scopeRoot);
 
   if (gitRoot) {
-    return scanGitRepository(gitRoot, config, options.since);
+    return scanGitRepository(gitRoot, scopeRoot, config, options.since);
   }
 
-  return scanFilesystem(options.cwd, config);
+  return scanFilesystem(scopeRoot, config);
 }
 
 async function detectGitRoot(cwd: string): Promise<string | undefined> {
@@ -52,22 +54,32 @@ async function detectGitRoot(cwd: string): Promise<string | undefined> {
 }
 
 async function scanGitRepository(
-  root: string,
+  gitRoot: string,
+  scopeRoot: string,
   config: RepoMeterConfig,
   since?: string
 ): Promise<ScanResult> {
-  const tracked = await git.listFiles({ fs, dir: root });
-  const ignoreFilter = await createIgnoreFilter(root);
-  const allFiles = await collectFiles(root, root, config, ignoreFilter);
+  const tracked = await git.listFiles({ fs, dir: gitRoot });
+  const ignoreFilter = await createIgnoreFilter(gitRoot);
+  const allFiles = await collectFiles(scopeRoot, scopeRoot, config, ignoreFilter);
+  const scopePrefix = normalizeScopePrefix(gitRoot, scopeRoot);
 
-  const trackedSet = new Set(tracked.map(normalizePath));
-  let trackedSelection = tracked.map(normalizePath);
+  const trackedSet = new Set(
+    tracked
+      .map(normalizePath)
+      .filter((file) => isWithinScope(file, scopePrefix))
+      .map((file) => toScopeRelative(file, scopePrefix))
+  );
+  let trackedSelection = [...trackedSet];
 
   if (since) {
     try {
-      const changedTracked = await diffFilesSinceRef(root, since);
+      const changedTracked = await diffFilesSinceRef(gitRoot, since);
       if (changedTracked.length > 0) {
-        trackedSelection = changedTracked.filter((file) => trackedSet.has(file));
+        trackedSelection = changedTracked
+          .filter((file) => isWithinScope(file, scopePrefix))
+          .map((file) => toScopeRelative(file, scopePrefix))
+          .filter((file) => trackedSet.has(file));
       }
     } catch {
       // If statusMatrix fails, keep the full tracked set.
@@ -75,15 +87,16 @@ async function scanGitRepository(
   }
 
   const untracked = allFiles.filter((file) => !trackedSet.has(file));
-  const records = await materializeFiles(root, trackedSelection, untracked, config);
+  const records = await materializeFiles(scopeRoot, trackedSelection, untracked, config);
   return {
-    root,
+    root: scopeRoot,
     mode: "git",
     config,
     files: records,
     trackedFiles: records.filter((file) => file.tracked).length,
     untrackedFiles: records.filter((file) => !file.tracked).length,
-    since
+    since,
+    gitRoot
   };
 }
 
@@ -228,4 +241,26 @@ async function diffFilesSinceRef(root: string, ref: string): Promise<string[]> {
   });
 
   return results.filter(Boolean) as string[];
+}
+
+function normalizeScopePrefix(gitRoot: string, scopeRoot: string): string {
+  const relative = normalizePath(path.relative(gitRoot, scopeRoot));
+  return relative === "." ? "" : relative;
+}
+
+function isWithinScope(relativePath: string, scopePrefix: string): boolean {
+  if (!scopePrefix) {
+    return true;
+  }
+  return relativePath === scopePrefix || relativePath.startsWith(`${scopePrefix}/`);
+}
+
+function toScopeRelative(relativePath: string, scopePrefix: string): string {
+  if (!scopePrefix) {
+    return relativePath;
+  }
+  if (relativePath === scopePrefix) {
+    return "";
+  }
+  return relativePath.slice(scopePrefix.length + 1);
 }

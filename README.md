@@ -126,14 +126,17 @@ repo-meter baseline trend
 Open several repos at once:
 
 ```bash
-repo-meter tui C:\path\to\repo-a C:\path\to\repo-b
+repo-meter tui "C:\path\to\repo-a" "C:\path\to\repo-b"
 ```
 
 Or:
 
 ```bash
-repo-meter tui --repos C:\path\to\repo-a,C:\path\to\repo-b
+repo-meter tui --repos "C:\path\to\repo-a,C:\path\to\repo-b"
 ```
+
+On Windows and PowerShell, quote each repo path if it may contain spaces.
+That includes common paths like `C:\Users\Your Name\...` or `C:\Users\...\OneDrive\...`.
 
 Inside the TUI:
 

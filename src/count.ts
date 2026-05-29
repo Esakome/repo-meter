@@ -90,7 +90,7 @@ export async function countRepository(scan: ScanResult, topOverride?: number): P
     git:
       scan.mode === "git"
         ? {
-            root: scan.root,
+            root: scan.gitRoot ?? scan.root,
             trackedFiles: scan.trackedFiles,
             untrackedFiles: scan.untrackedFiles,
             since: scan.since

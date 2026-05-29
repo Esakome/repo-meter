@@ -28,16 +28,18 @@ export async function resolveTuiRuntimeOptions(input: {
   top?: number;
 }): Promise<TuiRuntimeOptions> {
   const config = await loadConfig(input.cwd, input.configPath);
+  const rawRepoInputs = input.pathArgs?.length
+    ? expandPathArgs(input.pathArgs)
+    : input.reposFlag
+      ? parseReposFlag(input.reposFlag)
+      : config.repos.length
+        ? config.repos
+        : [input.cwd];
   const repoPaths = uniquePaths(
-    (input.pathArgs?.length
-      ? input.pathArgs
-      : input.reposFlag
-        ? input.reposFlag.split(",")
-        : config.repos.length
-          ? config.repos
-          : [input.cwd]
-    )
-      .map((repoPath) => path.resolve(input.cwd, repoPath.trim()))
+    rawRepoInputs
+      .map((repoPath) => stripWrappingQuotes(repoPath.trim()))
+      .filter(Boolean)
+      .map((repoPath) => path.resolve(input.cwd, repoPath))
       .filter(Boolean)
   );
 
@@ -170,55 +172,70 @@ async function collectNativeGitStatus(repoPath: string): Promise<RepoLocalGitSta
       execFileAsync("git", ["status", "--porcelain=v1", "--branch"], { cwd: repoPath }),
       execFileAsync("git", ["log", "-1", "--format=%cI"], { cwd: repoPath })
     ]);
-
-    const lines = statusStdout.split(/\r?\n/).filter(Boolean);
-    let branch: string | undefined;
-    let modified = 0;
-    let deleted = 0;
-    let staged = 0;
-    let untracked = 0;
-
-    for (const line of lines) {
-      if (line.startsWith("## ")) {
-        const branchToken = line.slice(3).split("...")[0]?.trim();
-        if (branchToken && branchToken !== "HEAD (no branch)") {
-          branch = branchToken;
-        }
-        continue;
-      }
-
-      const x = line[0] ?? " ";
-      const y = line[1] ?? " ";
-
-      if (x === "?" && y === "?") {
-        untracked += 1;
-        continue;
-      }
-
-      if (x !== " " && x !== "?") {
-        staged += 1;
-      }
-
-      if (y === "D") {
-        deleted += 1;
-      } else if (y !== " ") {
-        modified += 1;
-      }
-    }
+    const parsed = parseNativeGitStatusOutput(statusStdout);
 
     const lastCommitAt = commitStdout.trim() || undefined;
     return {
-      branch,
-      modified,
-      deleted,
-      staged,
-      untracked,
-      clean: modified === 0 && deleted === 0 && staged === 0 && untracked === 0,
+      branch: parsed.branch,
+      modified: parsed.modified,
+      deleted: parsed.deleted,
+      staged: parsed.staged,
+      untracked: parsed.untracked,
+      clean: parsed.modified === 0 && parsed.deleted === 0 && parsed.staged === 0 && parsed.untracked === 0,
       lastCommitAt
     };
   } catch {
     return undefined;
   }
+}
+
+export function parseNativeGitStatusOutput(statusStdout: string): {
+  branch?: string;
+  modified: number;
+  deleted: number;
+  staged: number;
+  untracked: number;
+} {
+  const lines = statusStdout.split(/\r?\n/).filter(Boolean);
+  let branch: string | undefined;
+  let modified = 0;
+  let deleted = 0;
+  let staged = 0;
+  let untracked = 0;
+
+  for (const line of lines) {
+    if (line.startsWith("## ")) {
+      const branchToken = line.slice(3).split("...")[0]?.trim();
+      if (branchToken && branchToken !== "HEAD (no branch)") {
+        branch = branchToken;
+      }
+      continue;
+    }
+
+    if (!/^[ MADRCU?!]{2} /.test(line)) {
+      continue;
+    }
+
+    const x = line[0] ?? " ";
+    const y = line[1] ?? " ";
+
+    if (x === "?" && y === "?") {
+      untracked += 1;
+      continue;
+    }
+
+    if (x !== " " && x !== "?") {
+      staged += 1;
+    }
+
+    if (y === "D") {
+      deleted += 1;
+    } else if (y !== " ") {
+      modified += 1;
+    }
+  }
+
+  return { branch, modified, deleted, staged, untracked };
 }
 
 export async function collectRemoteStatus(
@@ -459,4 +476,89 @@ function latestFileChange(summary: Awaited<ReturnType<typeof countRepository>>):
 
 function uniquePaths(paths: string[]): string[] {
   return [...new Set(paths.map((entry) => path.normalize(entry)))];
+}
+
+function expandPathArgs(entries: string[]): string[] {
+  const expanded: string[] = [];
+  for (const entry of entries) {
+    expanded.push(...parseRepoInputText(entry));
+  }
+  return expanded;
+}
+
+function parseReposFlag(value: string): string[] {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return [];
+  }
+  const normalized =
+    trimmed.startsWith('"') && trimmed.endsWith('"') && !trimmed.includes('","')
+      ? trimmed.slice(1, -1).trim()
+      : trimmed;
+  if (normalized.includes('"')) {
+    return splitOutsideQuotes(normalized, /,/);
+  }
+  return normalized
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
+
+export function parseRepoInputText(value: string): string[] {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return [];
+  }
+
+  const reposMatch = trimmed.match(/^(?:repo-meter\s+tui\s+)?--repos(?:=|\s+)(.+)$/i);
+  if (reposMatch?.[1]) {
+    return parseReposFlag(reposMatch[1]);
+  }
+
+  const tuiMatch = trimmed.match(/^repo-meter\s+tui\s+(.+)$/i);
+  if (tuiMatch?.[1]) {
+    return splitOutsideQuotes(tuiMatch[1], /\s/);
+  }
+
+  if (trimmed.includes('"')) {
+    return splitOutsideQuotes(trimmed, /\s/);
+  }
+
+  return [trimmed];
+}
+
+function splitOutsideQuotes(value: string, separator: RegExp): string[] {
+  const parts: string[] = [];
+  let current = "";
+  let inQuotes = false;
+
+  for (const char of value) {
+    if (char === '"') {
+      inQuotes = !inQuotes;
+      continue;
+    }
+    if (!inQuotes && separator.test(char)) {
+      const token = stripWrappingQuotes(current.trim());
+      if (token) {
+        parts.push(token);
+      }
+      current = "";
+      continue;
+    }
+    current += char;
+  }
+
+  const finalToken = stripWrappingQuotes(current.trim());
+  if (finalToken) {
+    parts.push(finalToken);
+  }
+
+  return parts;
+}
+
+function stripWrappingQuotes(value: string): string {
+  if (value.length >= 2 && value.startsWith('"') && value.endsWith('"')) {
+    return value.slice(1, -1).trim();
+  }
+  return value;
 }

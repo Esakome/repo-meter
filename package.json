@@ -1,6 +1,6 @@
 {
   "name": "repo-meter",
-  "version": "1.3.3",
+  "version": "1.3.4",
   "description": "A Git-aware CLI and live TUI for monitoring active repositories, local drift, and repo composition.",
   "license": "MIT",
   "keywords": [

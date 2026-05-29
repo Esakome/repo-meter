@@ -1,0 +1,47 @@
+{
+  "name": "repo-meter",
+  "version": "1.3.1",
+  "description": "A Git-aware CLI and live TUI for monitoring active repositories, local drift, and repo composition.",
+  "license": "MIT",
+  "keywords": [
+    "cli",
+    "tui",
+    "git",
+    "repo",
+    "metrics",
+    "sloc",
+    "cloc",
+    "scc",
+    "dashboard",
+    "typescript"
+  ],
+  "type": "module",
+  "files": [
+    "dist",
+    "vendor/scc",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "bin": {
+    "repo-meter": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "npm run build && node tests/run-tests.js",
+    "start": "node dist/cli.js",
+    "dev": "npm.cmd run build && node dist/cli.js",
+    "prepare": "npm run build"
+  },
+  "dependencies": {
+    "ignore": "^7.0.5",
+    "isomorphic-git": "^1.38.3",
+    "minimatch": "^10.2.5",
+    "yargs": "^18.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.9.1",
+    "typescript": "^6.0.3"
+  }
+}
